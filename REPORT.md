@@ -6,13 +6,13 @@
 |---|---|
 | Họ và tên | `<điền>` |
 | MSSV (đúng bằng `LAB_STUDENT_ID` trong `.env`) | `2A202602715` |
-| GitHub | `<điền: tên tài khoản>` |
-| Trip dùng cho bài tập sập và chạy lại (xem GUIDE, bước 5) | `<điền: trip-xxxxx>` |
+| GitHub | `kascenite` |
+| Trip dùng cho bài tập sập và chạy lại (xem GUIDE, bước 5) | `trip-02086` |
 
 ## Kết quả cuối
 
-- `dataset_version` của bạn: `<điền>`  (phải khớp `report/evidence/run_summary.json`)
-- Số khung hình train / val / test của bạn: `<điền>`
+- `dataset_version` của bạn: `e274938b642c`  (phải khớp `report/evidence/run_summary.json`)
+- Số khung hình train / val / test của bạn: `726 / 135 / 158` (tổng 1019 khung; 18 / 4 / 4 trip)
 - `report/verify.txt`: tạo bằng `python3 scripts/check_submission.py --save-verify` (phải có `27/27 checks passed`).
 - Ảnh chụp trong `report/screenshots/`: `airflow_graph.png`, `minio_lake.png`, `metabase_dashboard.png`, và ảnh bài tập sập/chạy lại (log task đỏ thấy trip của bạn).
 
@@ -58,11 +58,6 @@ Vì sao test `max_gap_ms` là `warn` còn `in_range` là `error`? Kết quả th
 Thí nghiệm `break-gate` nới `max_speed_mps` từ 70 lên 1000 để 6 dòng vô lý (3 dòng mỗi drive) lọt vào silver. Kết quả trong `break_gate.json`: `gate_failed: true`; test `in_range_silver_telemetry_speed_mps__70__0` bắt được **6 dòng**; summary khi nới là `PASS=5 WARN=1 ERROR=1`, sau khi khôi phục là `PASS=6 WARN=1 ERROR=0`. 6 dòng khớp đúng số `speed_out_of_range` ở bảng quarantine (3 + 3).
 
 Điều này cho thấy cổng chất lượng là lớp bảo vệ độc lập với luật làm sạch: khi một luật bị nới nhầm (hoặc bị lỗi), test ở cổng vẫn phát hiện và chặn các task phía sau, nên dữ liệu xấu không lan sang gold.
-
-### Câu 3
-Vì sao test `max_gap_ms` là `warn` còn `in_range` là `error`? Kết quả thí nghiệm `break-gate` của bạn (`break_gate.json`): test nào bắt được, bao nhiêu dòng, và điều đó cho biết gì về vai trò của "cổng chất lượng"?
-
-(trả lời ở đây)
 
 ## Bước 3 · Silver frames
 
@@ -111,28 +106,60 @@ Khác với bạn bè vì MSSV được trộn vào thứ tự md5 khi xếp tri
 ### Câu 8
 Đọc phần `lineage` trong `manifest.json` của dataset bạn. Trả lời "dataset này được tạo từ dữ liệu nào?" bằng chính nội dung đó. Nếu một người hỏi 3 tháng sau, thông tin nào giúp tái tạo lại đúng dataset này?
 
-(trả lời ở đây)
+`lineage` trong `gold/datasets/e274938b642c/manifest.json` (lần chạy cuối) cho biết dataset này được tạo từ:
+- Hai video gốc, nhận diện bằng sha256: drive_a `636ba1a98dfc...e9aa`, drive_b `bfa62703f645...9fdc`.
+- Phiên bản Delta của từng bảng đã dùng: `bronze.raw_telemetry_a` 0, `bronze.raw_telemetry_b` 0, `bronze.trips_raw` 0, `bronze.video_files` 1, `silver.telemetry` 0, `silver.frames_flagged` 0, `silver.frame_telemetry` 0, và `silver.frames` **25** (26 trip, mỗi trip một commit, nên version đến 25).
+
+Manifest còn ghi `rules` (bỏ khung đen, mờ, trùng, mất đồng bộ; chia theo trip, phân tầng theo drive, thứ tự md5), `frames` 1019, `manifest_sha256` `a83f223a...0cfe561` và `created_at`.
+
+Để tái tạo sau 3 tháng cần: (1) hai video đúng sha256 ở trên; (2) đúng phiên bản của các bảng Delta đó (time travel đọc lại được bảng ở version cũ); (3) mã pipeline và các tham số trong `dbt_project.yml` (`dup_hamming: 2`, `dark_luma: 12`, `blur_var: 40`, `sync_tol_ms: 150`, `split_train: 0.70`, `split_val: 0.15`) cùng commit git của repo; (4) **MSSV `2A202602715`**, vì nó là muối của cách chia split. Chạy lại đủ cả bốn thứ thì ra đúng `dataset_version` `e274938b642c`; chỉ cần sai một thứ thì version đổi.
 
 ## Bước 5 · Điều phối và phục vụ
 
 ### Câu 9
 Mô tả chính xác điều xảy ra khi trip của bạn sập rồi chạy lại: bao nhiêu task chuyển đỏ, bao nhiêu task `upstream_failed`, bạn clear gì, dữ liệu có nhân đôi không, `dataset_version` có đổi không? Bằng chứng (ảnh, số) là gì?
 
-(trả lời ở đây)
+Trip của tôi là `trip-02086` (chỉ số 3 trong 26 trip; xem lưu ý về cách tính ở mục Nhìn lại). Tôi đặt `LAB_FAIL_ONCE=trip-02086`, trigger `day09_reset` rồi `day09_video_pipeline` (run `manual__2026-10-12T12:36:54+00:00`).
+
+- Task đỏ: **1** (`silver_frames` map_index 3). Log ghi `RuntimeError: simulated crash while extracting trip-02086; run it again`.
+- `upstream_failed`: **7** (`dbt_run_silver`, `dbt_test_silver`, `dbt_run_gold`, `dbt_test_gold`, `publish_lake`, `export_dataset`, `publish_warehouse`); 29 task còn lại thành công (tổng 37 task instance).
+- Tôi clear đúng task đỏ đó (mở task `silver_frames`, map index 3, bấm Clear; hộp thoại ghi 8 task bị ảnh hưởng: task đỏ cộng 7 task phía sau). 25 task `silver_frames` còn lại **không chạy lại** (đều `try_number` 1). Task đỏ chạy lại thành công ở lần thử 2, 7 task phía sau chạy tiếp, cuối cùng cả 37 task `success` và DAG xanh.
+- Dữ liệu không nhân đôi: `silver.frames` có 1246 dòng và 1246 `frame_id` khác nhau; `trip-02086` có đúng 60 dòng. Lịch sử Delta của trip này chỉ có **một** commit `WRITE` (60 dòng, `predicate trip_id = 'trip-02086'`), vì lần sập xảy ra trước khi ghi nên không có gì bị ghi dở.
+- `dataset_version` **không đổi**: vẫn `e274938b642c`, `verify` vẫn 27/27.
+- Ảnh: `report/screenshots/airflow_crash_log.png` (log task đỏ, thấy `trip-02086`) và `airflow_after_clear.png` (Graph xanh sau khi clear).
+
+Nhờ mỗi trip là một partition ghi bằng overwrite theo predicate, và dbt/publish chỉ chạy sau khi mọi trip xong, một trip hỏng được chạy lại riêng mà không đụng phần còn lại.
 
 ### Câu 10
 Nâng từ 2 drive lên **500 xe mỗi ngày**: ba thành phần nào của pipeline này sẽ vỡ đầu tiên, và bạn thay bằng gì (nối với slide 12, 22, 23)?
 
-(trả lời ở đây)
+Số đo hiện tại: 2 drive (khoảng 10 phút video, 26 trip) chạy hết DAG trong khoảng 1 phút 40 giây, trên một container Airflow có `PARALLELISM=2`. Nếu mỗi xe một drive cỡ 5 phút thì 500 xe là khoảng 250 lần khối lượng hiện tại; ba chỗ vỡ trước:
+
+1. **Giải mã video và điều phối.** `silver_frames` giải mã bằng FFmpeg trong BashOperator, mỗi lần chỉ 2 task song song, một executor trên một máy. Nút cổ chai là giải mã video (slide 24). Thay bằng Celery hoặc Kubernetes executor với worker tự co giãn (có thể giải mã bằng GPU), và chia việc theo (ngày, xe, trip). Số task mapped từ 26 lên hàng chục nghìn mỗi ngày, nên cần phân vùng DAG theo ngày hoặc dùng sự kiện nạp (hàng đợi) thay vì một DAG lớn.
+2. **Kho lưu trữ và bảng Delta nhỏ lẻ.** Mỗi trip một commit và mỗi khung hình một file JPEG: 1246 khung đã là hơn 2300 object trong MinIO một nút, đến hàng chục triệu thì list và ghi file nhỏ sẽ chậm. Thay bằng object storage nhiều nút (S3), partition Delta theo ngày/xe, nén file định kỳ (`OPTIMIZE`/`VACUUM`), và gom khung hình thành shard (Parquet/WebDataset) thay vì file lẻ.
+3. **Biến đổi và warehouse một tiến trình.** dbt + DuckDB chạy trên một file `lakehouse.duckdb` (một người ghi) và dbt dựng lại toàn bộ bảng mỗi lần, cộng với một Postgres làm warehouse. Thay bằng engine phân tán (Spark/Trino) hoặc DuckDB theo từng phân vùng, mô hình dbt `incremental`, và warehouse dạng cột (BigQuery, ClickHouse...) cho dashboard (slide 22).
+
+Ngoài ra `dataset_version` hiện băm toàn bộ khung hình mỗi lần xuất, cũng sẽ cần tính tăng dần theo phân vùng.
 
 ## Câu hỏi riêng của bạn trên Metabase
 
 Câu SQL bạn thêm vào dashboard và điều nó cho biết:
 
-(trả lời ở đây)
+```sql
+select trip_id, round(100.0*(frames-frames_kept)/frames, 1) as dropped_pct
+from marts.mart_trip_summary order by dropped_pct desc limit 12
+```
+
+Câu thứ hai gộp theo drive: `select drive_id, sum(frames), sum(frames_kept), round(100.0*(sum(frames)-sum(frames_kept))/sum(frames),1) from marts.mart_trip_summary group by drive_id`.
+
+Kết quả: drive A bỏ **27,6%** khung (602 vào, 436 giữ lại), drive B chỉ **9,5%** (644 vào, 583 giữ lại). Trip bỏ nhiều nhất là `trip-04622` (56,7%: 34 trong 60 khung bị bỏ), rồi `trip-03904` (50,0%) và `trip-02086` (46,7%), đều của drive A. Tôi tra thêm cờ trong `silver_frames_flagged`: ở các trip này khung đen và mờ đều bằng 0, toàn bộ khung bị bỏ là **khung gần trùng** (28/60 ở `trip-02086`, 34/60 ở `trip-04622`). Với `trip-02086` (tốc độ trung bình 17,6 km/h) và `trip-08888` (6,5 km/h) thì xe chạy chậm giải thích được. Riêng `trip-04622` chạy trung bình 67,1 km/h mà vẫn có 34 khung trùng, nên xe chậm không giải thích được; tôi nghi do camera đứng hình (drive A có đoạn đứng hình 6 giây), nhưng chưa kiểm chứng thêm.
 
 ## Nhìn lại
 
 Điều bạn thấy bất ngờ nhất, điều gì còn chưa rõ, và một lỗi dữ liệu mà bạn nghĩ pipeline **chưa** bắt được (nếu có). Tối đa 8 dòng.
 
-(trả lời ở đây)
+- Bất ngờ nhất: nguyên nhân chính khiến mất khung không phải khung đen hay mờ mà là khung gần trùng (149 khung ở drive A, trong khi chỉ có 6 đen và 9 mờ), và một thí nghiệm nhỏ (đổi MSSV) đổi hẳn `dataset_version` dù dữ liệu y nguyên.
+- Gặp lỗi môi trường: container chạy bằng uid 50000 không ghi được vào `work/`, `report/`, `dbt/` (thuộc uid 1000), nên `dbt` báo `Permission denied`; tôi xử lý bằng ACL cho uid 50000, không sửa `docker-compose.yml`.
+- Chưa rõ: `max_gap_ms` luôn WARN, nhưng tôi chưa xem cụ thể những khoảng mất tín hiệu nào và chúng ảnh hưởng khung nào; module 3 cũng chỉ bắt được 11/12 khung đứng hình ở drive A, tức vẫn sót 1 khung mà pipeline chưa bắt.
+- Lỗi mà tôi nghĩ pipeline chưa bắt: khung gần trùng bị loại bằng ngưỡng cố định 2 bit, nên cảnh xe dừng đèn đỏ hợp lệ và camera hỏng đều bị coi giống nhau; pipeline không phân biệt hai trường hợp này.
+- Giả định: MSSV `2A202602715` có chữ nên công thức `int(MSSV) % 26` trong GUIDE không chạy được; tôi lấy phần chữ số `202602715` rồi chia 26 dư 3, ra `trip-02086`. Nếu giảng viên tính cách khác thì trip sẽ khác.
