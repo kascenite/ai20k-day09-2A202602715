@@ -37,7 +37,27 @@ Bằng chứng chạy lại không đổi: lần nạp thứ hai báo `already p
 ### Câu 2
 Pipeline đưa hai nguồn về một schema như thế nào (đơn vị, kiểu thời gian, **độ lệch đồng hồ**)? Bằng chứng nào trong kết quả bước 2 cho thấy đã đúng? Dán bảng quarantine của bạn (số dòng theo từng lý do, từng drive) và giải thích vì sao dòng lỗi vào `rejects` thay vì bị xoá.
 
-(trả lời ở đây)
+Hai staging model `stg_telemetry_a.sql` và `stg_telemetry_b.sql` đưa cả hai nguồn về cùng một schema: tên cột chung, tốc độ m/s (B chia km/h cho 3,6), timestamp kiểu UTC (B đổi từ epoch ms), bàn đạp theo thang 0..1. Với B, pipeline còn **trừ độ lệch đồng hồ 1500 ms** khai báo trong `sources.json`.
+
+Bằng chứng đã đúng: thời điểm mẫu đầu của B sau chuẩn hoá là `2025-10-08 14:30:00.009+00:00`, khớp thời điểm bắt đầu video (`14:30:00`), chỉ lệch 9 ms (module 2 đòi lệch dưới 0,5 giây). Nếu không trừ thì mẫu đầu sẽ ở `14:30:01.5`. Tốc độ tối đa sau chuẩn hoá là 71 km/h (A) và 100 km/h (B), dưới 130 km/h.
+
+| drive | duplicate | speed_missing | speed_out_of_range |
+|---|---|---|---|
+| drive_a | 20 | 30 | 3 |
+| drive_b | 20 | 30 | 3 |
+
+Cân bằng số dòng: A là 2968 sạch + 53 cách ly = 3021 nhận về; B là 3181 + 53 = 3234. Tổng `silver.telemetry_rejects` là 106 dòng.
+
+Dòng lỗi vào `rejects` kèm `reject_reason` thay vì bị xoá vì: (1) xoá im lặng làm số dòng không còn cân (nhận về = sạch + cách ly), không ai biết đã mất gì; (2) có lý do thì tra được nguyên nhân gốc (cảm biến, nguồn ghi trùng) và báo ngược cho nguồn; (3) nếu luật lọc sai thì dòng vẫn còn để khôi phục.
+
+### Câu 3
+Vì sao test `max_gap_ms` là `warn` còn `in_range` là `error`? Kết quả thí nghiệm `break-gate` của bạn (`break_gate.json`): test nào bắt được, bao nhiêu dòng, và điều đó cho biết gì về vai trò của "cổng chất lượng"?
+
+`in_range` (tốc độ 0..70 m/s) là `error` vì giá trị vô lý làm hỏng dữ liệu về sau (tính trung bình, huấn luyện), nên phải dừng pipeline, không cho dữ liệu xấu đi tiếp. `max_gap_ms` (khoảng cách giữa hai mẫu liên tiếp vượt 1000 ms) là `warn` vì nó báo **mất tín hiệu cảm biến**, tức dữ liệu thiếu chứ không sai. Đây là đặc điểm của nguồn, không do pipeline và không sửa được ở downstream. Dừng cả pipeline vì nó thì không đáng, nhưng vẫn cần ghi nhận (ở bước 2 dbt test ra `PASS=6 WARN=1 ERROR=0`).
+
+Thí nghiệm `break-gate` nới `max_speed_mps` từ 70 lên 1000 để 6 dòng vô lý (3 dòng mỗi drive) lọt vào silver. Kết quả trong `break_gate.json`: `gate_failed: true`; test `in_range_silver_telemetry_speed_mps__70__0` bắt được **6 dòng**; summary khi nới là `PASS=5 WARN=1 ERROR=1`, sau khi khôi phục là `PASS=6 WARN=1 ERROR=0`. 6 dòng khớp đúng số `speed_out_of_range` ở bảng quarantine (3 + 3).
+
+Điều này cho thấy cổng chất lượng là lớp bảo vệ độc lập với luật làm sạch: khi một luật bị nới nhầm (hoặc bị lỗi), test ở cổng vẫn phát hiện và chặn các task phía sau, nên dữ liệu xấu không lan sang gold.
 
 ### Câu 3
 Vì sao test `max_gap_ms` là `warn` còn `in_range` là `error`? Kết quả thí nghiệm `break-gate` của bạn (`break_gate.json`): test nào bắt được, bao nhiêu dòng, và điều đó cho biết gì về vai trò của "cổng chất lượng"?
