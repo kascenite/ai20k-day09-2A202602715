@@ -95,12 +95,18 @@ Khung hình **đen** và khung hình **tối** khác nhau thế nào, pipeline x
 ### Câu 6
 Dựa vào `leakage.json`: chia theo khung hình làm bao nhiêu trip bị chia cắt, so với chia theo trip? Vì sao điều này làm điểm kiểm thử đẹp một cách giả tạo?
 
-(trả lời ở đây)
+`leakage.json` (1019 khung đáng dùng, 26 trip): chia **theo khung hình** ngẫu nhiên 70/15/15 làm **26/26 trip** bị chia cắt, và cả 26 trip đều có khung ở cả train lẫn test. Chia **theo trip** (gold của pipeline) thì **0 trip** bị chia cắt.
+
+Các khung liền nhau cách nhau 0,5 giây, cùng đoạn đường, cùng ánh sáng, cùng xe phía trước nên gần như giống hệt (ở bước 3 có 149 khung của drive A giống khung liền trước chỉ với dHash khác tối đa 2 bit). Khi một nửa trip nằm ở train và nửa còn lại ở test, mỗi khung test đều có "anh em sinh đôi" trong train; mô hình chỉ cần nhớ cảnh là đoán đúng, không cần học khái quát. Điểm kiểm thử vì thế cao giả tạo (đo khả năng ghi nhớ), nhưng khi gặp cảnh hoàn toàn mới trên đường thật thì kém hơn nhiều. Chia theo trip buộc test là những cảnh mô hình chưa từng thấy, nên điểm phản ánh đúng hơn. Pipeline còn có test `no_straddle` trong dbt để chặn lỗi này, và module 4 kiểm tra `no trip is in two splits` (đạt, 26 trip).
 
 ### Câu 7
 Vì sao `dataset_version` là **băm nội dung** chứ không phải ngày giờ hay số đếm? Hai lần chạy liên tiếp cho kết quả gì? Vì sao `dataset_version` của bạn **khác** bạn bè dù cùng dữ liệu (liên hệ MSSV)?
 
-(trả lời ở đây)
+Trong `export_dataset`, version là 12 ký tự đầu của sha256 trên danh sách `frame_id|split` của mọi khung. Nó là **băm nội dung**, nên: cùng nội dung (cùng khung, cùng split) thì ra cùng version; chỉ cần một khung đổi split hoặc thêm bớt một khung thì version khác. Ngày giờ hoặc số đếm thì không có tính này: chạy lại cùng dữ liệu vẫn ra version mới (không biết hai bản có giống nhau không), còn hai bản khác nhau có thể trùng số. Băm nội dung cho phép đối chiếu dataset và phát hiện thay đổi âm thầm.
+
+Hai lần chạy liên tiếp của tôi cho cùng `e274938b642c` (`step 4`, rồi `cli export-dataset`, và cả `step all --reset` trước đó), dù `created_at` trong manifest khác nhau vì giờ không nằm trong băm.
+
+Khác với bạn bè vì MSSV được trộn vào thứ tự md5 khi xếp trip vào train/val/test, nên mỗi người có tập trip ở mỗi split khác nhau, dù dữ liệu gốc giống nhau. Tôi thử đặt MSSV tạm là `TEST0001` rồi chạy lại `step 4`: version đổi từ `e274938b642c` sang `9ac47dcef388`, và số khung đổi từ train/val/test = 726/135/158 sang 722/159/138 (tổng vẫn 1019, vẫn 18/4/4 trip). Sau khi đặt lại MSSV `2A202602715` thì version trở về `e274938b642c`. Điều này cho thấy giảng viên chỉ cần so version để biết bài chạy bằng đúng MSSV hay không.
 
 ### Câu 8
 Đọc phần `lineage` trong `manifest.json` của dataset bạn. Trả lời "dataset này được tạo từ dữ liệu nào?" bằng chính nội dung đó. Nếu một người hỏi 3 tháng sau, thông tin nào giúp tái tạo lại đúng dataset này?
