@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Họ và tên | `<điền>` |
-| MSSV (đúng bằng `LAB_STUDENT_ID` trong `.env`) | `<điền>` |
+| MSSV (đúng bằng `LAB_STUDENT_ID` trong `.env`) | `2A202602715` |
 | GitHub | `<điền: tên tài khoản>` |
 | Trip dùng cho bài tập sập và chạy lại (xem GUIDE, bước 5) | `<điền: trip-xxxxx>` |
 
@@ -21,7 +21,16 @@
 ### Câu 1
 Liệt kê **ít nhất 4 khác biệt** giữa telemetry nguồn A và nguồn B mà bạn thấy ở bronze. Vì sao pipeline giữ **mỗi nguồn một bảng bronze** và để mọi cột ở dạng chữ, thay vì gộp và ép kiểu ngay?
 
-(trả lời ở đây)
+Khác biệt giữa `raw_telemetry_a` (3021 dòng) và `raw_telemetry_b` (3234 dòng):
+1. Tên cột: A là `ts_utc, speed_mps, heading_deg, lat, lon, alt_m, acc_x, acc_y, gas, brake, steer`; B là `timestamp_ms, spd_kmh, hdg, latitude, longitude, altitude, ax, ay, throttle_pct, brake_pct, steering`.
+2. Đơn vị tốc độ: A là m/s (dòng đầu 1.213), B là km/h (dòng đầu 55.11).
+3. Kiểu timestamp: A là chuỗi ISO UTC (`2025-10-07T08:00:00.014Z`), B là epoch mili giây (`1759933801509`).
+4. Thang bàn đạp: A `gas`/`brake` trong 0..1 (0.028), B `throttle_pct`/`brake_pct` theo % (2.0).
+5. Đồng hồ thiết bị: `video_files` ghi `telemetry_clock_offset_ms` là 0 cho A và 1500 cho B, tức đồng hồ B lệch 1,5 giây so với video.
+
+Mỗi nguồn một bảng vì schema khác nhau: gộp ngay sẽ buộc phải chọn tên cột, đơn vị và xử lý độ lệch đồng hồ ngay lúc nạp, và nếu chọn sai thì dữ liệu gốc đã mất. Mọi cột để dạng chữ (`typeof` ra `VARCHAR`, kể cả ô trống) để bronze giữ nguyên bản, không có dòng nào bị loại vì lỗi ép kiểu. Việc ép kiểu, đổi đơn vị và trừ độ lệch được dời sang silver, nơi dòng lỗi đi vào `rejects` kèm lý do. Nhờ vậy khi luật silver đổi, ta chạy lại từ bronze mà không cần nạp lại nguồn.
+
+Bằng chứng chạy lại không đổi: lần nạp thứ hai báo `already present` (nhận diện theo sha256 của video, ví dụ A `636ba1a9...`), và `cli history bronze.raw_telemetry_a` chỉ có một commit (`version 0`, `WRITE`, `rows_added 3021`).
 
 ## Bước 2 · Silver telemetry
 
