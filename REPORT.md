@@ -69,18 +69,26 @@ Vì sao test `max_gap_ms` là `warn` còn `in_range` là `error`? Kết quả th
 ### Câu 4
 Dựa vào `idempotency.json`: số dòng trước và sau hai lần chạy lại, và khi ghi kiểu `append`. Vì sao Delta `overwrite` theo partition (một trip) an toàn hơn xoá rồi ghi lại, nhất là khi giữa chừng có lỗi?
 
-(trả lời ở đây)
+Thí nghiệm chạy trên `trip-00003` (60 khung). `idempotency.json`: bảng `silver.frames` có 1246 dòng, dấu vân tay `6c7480dfde7e`; sau **hai lần** chạy lại partition vẫn là 1246 dòng, dấu vân tay `6c7480dfde7e`, `unchanged: true`. Khi mô phỏng kiểu `append` sai và chạy hai lần, trip này có **120 dòng** thay vì 60, tức nhân đôi (2x); số dòng cả bảng sẽ phình tương ứng và mọi bảng phía sau (gold, mart) đếm trùng.
+
+`overwrite` theo predicate `trip_id = ...` là một **commit nguyên tử** trong log Delta: dòng cũ của trip bị đánh dấu xoá và dòng mới được thêm trong cùng một commit, người đọc chỉ thấy bản trước hoặc bản sau, không thấy trạng thái ở giữa. Nếu tiến trình chết giữa chừng thì commit chưa được ghi, bảng vẫn nguyên như cũ, chạy lại là xong. Còn "xoá rồi ghi lại" là hai bước tách rời: chết sau bước xoá thì trip mất sạch dữ liệu và người đọc có thể thấy bảng thiếu. Predicate theo trip cũng giới hạn ảnh hưởng đúng một partition, 25 trip còn lại không bị đụng. Nhờ vậy backfill một trip hỏng chạy lại bao nhiêu lần cũng ra cùng một kết quả.
 
 ### Câu 5
 Khung hình **đen** và khung hình **tối** khác nhau thế nào, pipeline xử lý khác nhau ra sao, bạn có đồng ý không? Dựa vào `threshold.json`: nếu chọn ngưỡng 0, 2, 6 thì bao nhiêu khung bị coi là trùng ở mỗi drive? Bạn chọn ngưỡng nào, vì sao, và ngưỡng đó phụ thuộc vào tốc độ xe thế nào?
 
 | dHash khác tối đa | số khung trùng, drive A | số khung trùng, drive B |
 |---|---|---|
-| 0 | | |
-| 2 | | |
-| 6 | | |
+| 0 | 61 | 8 |
+| 2 | 149 | 53 |
+| 6 | 363 | 244 |
 
-(trả lời ở đây)
+(tổng khung: drive A 602, drive B 644; số khác lấy từ `threshold.json`, ví dụ ngưỡng 1/4/8 là A 109/269/438 và B 23/137/348)
+
+**Đen và tối.** Khung **đen** có độ sáng trung bình (luma) dưới 12: không còn thông tin hình ảnh (camera mất tín hiệu hoặc che kín), pipeline **loại**. Khung **tối** có luma từ 12 đến dưới 40: vẫn có nội dung (đường hầm, bóng râm, ban đêm) nhưng thiếu sáng, pipeline **gắn cờ nhưng giữ lại**. Kết quả của tôi: A có 6 đen và 4 tối, B có 4 đen và 61 tối. Tôi đồng ý vì khung tối là điều kiện lái xe có thật; loại hết thì mô hình không bao giờ học được cách chạy trong hầm hay buổi tối. Cờ vẫn cho phép lọc hoặc cân bằng lại sau nếu cần.
+
+**Ngưỡng trùng.** Ngưỡng càng cao thì càng nhiều khung bị coi là trùng: A tăng từ 61 (0 bit) lên 149 (2 bit) rồi 363 (6 bit) trên 602 khung, tức ở 6 bit hơn một nửa khung bị loại. Tôi chọn giữ ngưỡng **2** (mức pipeline đang dùng). Ngưỡng 0 chỉ bắt khung giống hệt từng bit nên bỏ sót khung gần như trùng do nhiễu nén video; ngưỡng 6 trở lên bắt đầu loại cả những khung khác nhau thật (cảnh đổi nhẹ khi xe vẫn đang chạy).
+
+**Phụ thuộc tốc độ xe.** Xe chậm thì hai khung liên tiếp (cách nhau 0,5 giây) gần giống nhau hơn nên trùng nhiều hơn: tốc độ trung bình A là khoảng 38 km/h, B khoảng 70 km/h, và ở ngưỡng 2 A có 149 khung trùng trong khi B chỉ có 53. A còn có camera đứng hình 6 giây, làm tăng thêm số khung trùng. Vì vậy một ngưỡng cố định không công bằng giữa các tình huống; ở bãi đỗ xe hoặc kẹt xe cần ngưỡng chặt hơn hoặc nên lấy mẫu theo quãng đường thay vì theo thời gian.
 
 ## Bước 4 · Gold
 
